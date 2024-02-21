@@ -31,7 +31,8 @@ class DiskEmulator:
                     "- cp <source> <destination>: Copies a disk to a new disk\n"
                     "- rn <old_name> <new_name>: Renames a selected disk\n"
                     "- fn <value>: Finds the first occurrence of a value in sectors and moves the cursor to it\n"
-                    "- rp <old_value> <new_value>: Replaces all occurrences of a value in sectors with a new value"),
+                    "- rp <old_value> <new_value>: Replaces all occurrences of a value in sectors with a new value\n"
+                    "- Inline commands can be chained using '>>'"),
             "err": ("Error codes:\n"
                     "- ERR001: Disk not found\n"
                     "- ERR002: No disk selected\n"
@@ -59,6 +60,7 @@ class DiskEmulator:
 
     def create_disk(self, name, format="custom", sectors=40):
         self.disk_format = format
+        sectors = int(sectors)  # Convert sectors to integer
         sector_data = '0 ' * 10
         lines = sectors // 10
         with open(f"{name}.mx", 'w') as disk:
@@ -251,30 +253,34 @@ class DiskEmulator:
         if not command:
             self.error_handler("ERR006")
             return
-        cmd, *args = command.split()
-        command_mapping = {
-            "list": self.list_disks,
-            "nd": lambda: self.create_disk(*args),
-            "dd": lambda: self.delete_disk(*args),
-            "fd": lambda: self.format_disk(*args) if args else self.format_disk(),
-            "sd": lambda: self.select_disk(*args),
-            "vd": self.visualize_disk,
-            "dm": self.display_memory_stats,
-            "mv": lambda: self.move_cursor(*args),
-            "ri": lambda: self.recursive_increase(int(args[0]) if args else 1),
-            "sum": self.sum_sectors,
-            "wc": lambda: print("The 'wc' command is deprecated. All changes are now written immediately."),
-            "cs": self.clear_screen,
-            "cp": lambda: self.copy_disk(*args),
-            "rn": lambda: self.rename_disk(*args),
-            "help": lambda: self.help(*args),
-            "inc": lambda: self.increment_sector(int(args[0]) if args else 1),
-            "dec": lambda: self.decrement_sector(int(args[0]) if args else 1),
-            "fn": lambda: self.find_value(*args),
-            "rp": lambda: self.replace_value(*args)
-        }
-        command_func = command_mapping.get(cmd, lambda: self.error_handler("ERR005"))
-        self.safe_execute(command_func)
+        # Split the command string into individual commands if inline commands are used
+        inline_commands = command.split(" >> ")
+        for cmd in inline_commands:
+            cmd_parts = cmd.split()
+            cmd_name, *args = cmd_parts
+            command_mapping = {
+                "list": self.list_disks,
+                "nd": lambda: self.create_disk(*args),
+                "dd": lambda: self.delete_disk(*args),
+                "fd": lambda: self.format_disk(*args) if args else self.format_disk(),
+                "sd": lambda: self.select_disk(*args),
+                "vd": self.visualize_disk,
+                "dm": self.display_memory_stats,
+                "mv": lambda: self.move_cursor(*args),
+                "ri": lambda: self.recursive_increase(int(args[0]) if args else 1),
+                "sum": self.sum_sectors,
+                "wc": lambda: print("The 'wc' command is deprecated. All changes are now written immediately."),
+                "cs": self.clear_screen,
+                "cp": lambda: self.copy_disk(*args),
+                "rn": lambda: self.rename_disk(*args),
+                "help": lambda: self.help(*args),
+                "inc": lambda: self.increment_sector(int(args[0]) if args else 1),
+                "dec": lambda: self.decrement_sector(int(args[0]) if args else 1),
+                "fn": lambda: self.find_value(*args),
+                "rp": lambda: self.replace_value(*args)
+            }
+            command_func = command_mapping.get(cmd_name, lambda: self.error_handler("ERR005"))
+            self.safe_execute(command_func)
 
 def main():
     emulator = DiskEmulator()
