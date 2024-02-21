@@ -1,4 +1,6 @@
 import os
+import itertools
+import re
 
 class DiskEmulator:
     def __init__(self):
@@ -18,11 +20,11 @@ class DiskEmulator:
                     "- fd [name] [format] [sectors]: Formats a disk with a custom number of sectors\n"
                     "- sd <name>: Selects a disk\n"
                     "- vd: Visualizes the selected disk\n"
-                    "- dm: Displays memory stats of the selected disk\n"
                     "- mv <position>: Moves the cursor\n"
                     "- inc [amount]: Increments the sector value by the specified amount, defaults to 1 if no amount given\n"
                     "- dec [amount]: Decrements the sector value by the specified amount, defaults to 1 if no amount given\n"
                     "- ri [increase value]: Recursively increases sector value, defaults to 1 if no value given\n"
+                    "- ira: Infinite recursive addition, cycles from 1-9 until interrupted\n"
                     "- sum: Sums all sector values\n"
                     "- wc: Writes changes to disk (Deprecated)\n"
                     "- cs: Clears the screen\n"
@@ -32,6 +34,8 @@ class DiskEmulator:
                     "- rn <old_name> <new_name>: Renames a selected disk\n"
                     "- fn <value>: Finds the first occurrence of a value in sectors and moves the cursor to it\n"
                     "- rp <old_value> <new_value>: Replaces all occurrences of a value in sectors with a new value\n"
+                    "- nv <new_value>: Replaces the value in the selected sector with the new value\n"
+                    "- df: Defragments the selected disk\n"
                     "- Inline commands can be chained using '>>'"),
             "err": ("Error codes:\n"
                     "- ERR001: Disk not found\n"
@@ -101,15 +105,17 @@ class DiskEmulator:
                     sectors[sector_num] = f"\033[1m\033[92m{sectors[sector_num]}\033[0m"  # Highlight selected sector
                 print(' '.join(sectors))
 
-    def display_memory_stats(self):
+    def defragment_disk(self):
         if self.selected_disk is None:
             self.error_handler("ERR002")
             return
-        with open(f"{self.selected_disk}.mx", 'r') as disk:
-            content = disk.read()
-            used_space = content.count(' ') + content.count('\n')
-            max_capacity = 80  # Assuming custom format has a max capacity of 80
-            print(f"Format: {self.disk_format}, Max. Capacity: {max_capacity}, Space Used: {used_space}/{max_capacity}")
+        print(f"Defragmenting {self.selected_disk}...")
+        with open(f"{self.selected_disk}.mx", 'r+') as disk:
+            lines = disk.readlines()
+            disk.seek(0)
+            defragmented_lines = [' '.join(sorted(line.strip().split(), key=int)) + '\n' for line in lines]
+            disk.writelines(defragmented_lines)
+        print("Defragmentation complete.")
 
     def move_cursor(self, position):
         if self.selected_disk is None:
@@ -146,45 +152,19 @@ class DiskEmulator:
         if not found:
             self.error_handler("ERR010")
 
-    def replace_value(self, old_value, new_value):
+    def infinite_recursive_addition(self):
         if self.selected_disk is None:
             self.error_handler("ERR002")
             return
         try:
-            with open(f"{self.selected_disk}.mx", 'r+') as disk:
-                lines = disk.readlines()
-                disk.seek(0)
-                modified_lines = []
-                for line in lines:
-                    new_line = []
-                    for value in line.strip().split():
-                        if value == old_value:
-                            overflow = int(new_value) - 9  # Assuming 9 is the max value
-                            underflow = 0 - int(new_value)  # Assuming 0 is the min value
-                            if overflow > 0:
-                                new_line.append(str(overflow))
-                            elif underflow > 0:
-                                new_line.append(str(9 - underflow))
-                            else:
-                                new_line.append(new_value)
-                        else:
-                            new_line.append(value)
-                    modified_lines.append(' '.join(new_line) + '\n')
-                disk.writelines(modified_lines)
-                print(f"All occurrences of {old_value} replaced with {new_value}.")
-        except Exception as e:
-            self.error_handler("ERR011")
-            print(f"Replace error: {e}")
-
-    def recursive_increase(self, amount=1):
-        if self.selected_disk is None:
-            self.error_handler("ERR002")
-            return
-        with open(f"{self.selected_disk}.mx", 'r+') as disk:
-            lines = disk.readlines()
-            disk.seek(0)
-            disk.writelines([' '.join(str((int(value) + amount) % 10) for value in line.strip().split()) + '\n' for line in lines])
-            print("All sector values increased.")
+            for amount in itertools.cycle(range(1, 10)):
+                with open(f"{self.selected_disk}.mx", 'r+') as disk:
+                    lines = disk.readlines()
+                    disk.seek(0)
+                    disk.writelines([' '.join(str((int(value) + amount) % 10) for value in line.strip().split()) + '\n' for line in lines])
+                print(f"All sector values increased by {amount}. Press Ctrl+C to stop.")
+        except KeyboardInterrupt:
+            print("Infinite recursive addition stopped.")
 
     def sum_sectors(self):
         if self.selected_disk is None:
@@ -249,38 +229,106 @@ class DiskEmulator:
             disk.writelines(lines)
             print(f"Sector value decremented by {amount}.")
 
+    def replace_value(self, old_value, new_value):
+        if self.selected_disk is None:
+            self.error_handler("ERR002")
+            return
+        with open(f"{self.selected_disk}.mx", 'r+') as disk:
+            lines = disk.readlines()
+            disk.seek(0)
+            modified = False
+            for i, line in enumerate(lines):
+                if old_value in line:
+                    lines[i] = line.replace(old_value, new_value)
+                    modified = True
+            if modified:
+                disk.writelines(lines)
+                print(f"All occurrences of {old_value} replaced with {new_value}.")
+            else:
+                self.error_handler("ERR011")
+
+    def recursive_increase(self, increase_value=1):
+        if self.selected_disk is None:
+            self.error_handler("ERR002")
+            return
+        line_num, sector_num = self.cursor_position
+        with open(f"{self.selected_disk}.mx", 'r+') as disk:
+            lines = disk.readlines()
+            disk.seek(0)
+            for i, line in enumerate(lines):
+                if i == line_num:
+                    sectors = line.strip().split()
+                    sectors[sector_num] = str((int(sectors[sector_num]) + increase_value) % 10)
+                    lines[i] = ' '.join(sectors) + '\n'
+            disk.writelines(lines)
+            print(f"Sector value recursively increased by {increase_value}.")
+
+    def new_value(self, new_value):
+        if self.selected_disk is None:
+            self.error_handler("ERR002")
+            return
+        line_num, sector_num = self.cursor_position
+        with open(f"{self.selected_disk}.mx", 'r+') as disk:
+            lines = disk.readlines()
+            disk.seek(0)
+            for i, line in enumerate(lines):
+                if i == line_num:
+                    sectors = line.strip().split()
+                    sectors[sector_num] = new_value
+                    lines[i] = ' '.join(sectors) + '\n'
+            disk.writelines(lines)
+            print(f"Sector value replaced with {new_value}.")
+
     def process_command(self, command):
         if not command:
             self.error_handler("ERR006")
             return
-        # Split the command string into individual commands if inline commands are used
-        inline_commands = command.split(" >> ")
-        for cmd in inline_commands:
-            cmd_parts = cmd.split()
-            cmd_name, *args = cmd_parts
-            command_mapping = {
-                "list": self.list_disks,
-                "nd": lambda: self.create_disk(*args),
-                "dd": lambda: self.delete_disk(*args),
-                "fd": lambda: self.format_disk(*args) if args else self.format_disk(),
-                "sd": lambda: self.select_disk(*args),
-                "vd": self.visualize_disk,
-                "dm": self.display_memory_stats,
-                "mv": lambda: self.move_cursor(*args),
-                "ri": lambda: self.recursive_increase(int(args[0]) if args else 1),
-                "sum": self.sum_sectors,
-                "wc": lambda: print("The 'wc' command is deprecated. All changes are now written immediately."),
-                "cs": self.clear_screen,
-                "cp": lambda: self.copy_disk(*args),
-                "rn": lambda: self.rename_disk(*args),
-                "help": lambda: self.help(*args),
-                "inc": lambda: self.increment_sector(int(args[0]) if args else 1),
-                "dec": lambda: self.decrement_sector(int(args[0]) if args else 1),
-                "fn": lambda: self.find_value(*args),
-                "rp": lambda: self.replace_value(*args)
-            }
-            command_func = command_mapping.get(cmd_name, lambda: self.error_handler("ERR005"))
-            self.safe_execute(command_func)
+        # Check if the command starts with "loop" and contains a loop count
+        loop_match = re.match(r"loop\((\d+)\):(.+)", command)
+        if loop_match:
+            loop_count = int(loop_match.group(1))
+            loop_commands = loop_match.group(2).strip().split(" >> ")
+            # Execute each command in the loop for the specified number of times
+            for _ in range(loop_count):
+                for cmd in loop_commands:
+                    cmd_parts = cmd.split()
+                    cmd_name, *args = cmd_parts
+                    command_mapping = self.get_command_mapping()
+                    command_func = command_mapping.get(cmd_name, lambda: self.error_handler("ERR005"))
+                    self.safe_execute(command_func, *args)
+        else:
+            # Original command processing logic for non-loop commands
+            inline_commands = command.split(" >> ")
+            for cmd in inline_commands:
+                cmd_parts = cmd.split()
+                cmd_name, *args = cmd_parts
+                command_mapping = self.get_command_mapping()
+                command_func = command_mapping.get(cmd_name, lambda: self.error_handler("ERR005"))
+                self.safe_execute(command_func, *args)
+
+    def get_command_mapping(self):
+        return {
+            "list": self.list_disks,
+            "nd": lambda *args: self.create_disk(*args),
+            "dd": lambda *args: self.delete_disk(*args),
+            "fd": lambda *args: self.format_disk(*args),
+            "sd": lambda *args: self.select_disk(*args),
+            "vd": self.visualize_disk,
+            "mv": lambda *args: self.move_cursor(*args),
+            "inc": lambda *args: self.increment_sector(*args),
+            "dec": lambda *args: self.decrement_sector(*args),
+            "fn": lambda *args: self.find_value(*args),
+            "rp": lambda *args: self.replace_value(*args),
+            "nv": lambda *args: self.new_value(*args),
+            "df": self.defragment_disk,
+            "sum": self.sum_sectors,
+            "cs": self.clear_screen,
+            "cp": lambda *args: self.copy_disk(*args),
+            "rn": lambda *args: self.rename_disk(*args),
+            "help": lambda *args: self.help(*args),
+            "ira": self.infinite_recursive_addition,
+            "ri": lambda *args: self.recursive_increase(*args)
+        }
 
 def main():
     emulator = DiskEmulator()
